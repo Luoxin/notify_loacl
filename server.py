@@ -14,10 +14,6 @@ app = Flask("notify")
 
 
 def gen_uuid() -> str:
-    """
-        获取uuid
-    :return: uuid
-    """
     return uu.uuid4().hex
 
 
