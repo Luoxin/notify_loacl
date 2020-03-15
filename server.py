@@ -70,6 +70,7 @@ def add_job():
                 remind.task,
                 trigger="date",
                 next_run_time=datetime.datetime.fromtimestamp(remind_at),
+                id=gen_uuid(),
                 args=[msg],
             )
         elif t == 2:  # 间隔提醒
@@ -78,7 +79,11 @@ def add_job():
                 return "invalid interval"
 
             remind.add_job(
-                remind.task, trigger="interval", seconds=interval, args=[msg],
+                remind.task,
+                trigger="interval",
+                seconds=interval,
+                id=gen_uuid(),
+                args=[msg],
             )
         return "OK"
     except:
