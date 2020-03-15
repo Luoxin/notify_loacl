@@ -1,9 +1,11 @@
 import datetime
+import json
 import threading
 import time
 import traceback
 import uuid as uu
 
+from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from variable_manager import VariableManager
@@ -86,6 +88,41 @@ def add_job():
                 args=[msg],
             )
         return "OK"
+    except:
+        traceback.print_exc()
+        return traceback.format_exc()
+
+
+@app.route("/api/notify/get_job_list", methods=["POST"])
+def get_job_list():
+    job_list = []
+
+    try:
+        for job in remind.get_jobs():
+            if job.args.__len__() > 0:
+                job_list.append(
+                    {
+                        "job_id": job.id,
+                        "title": job.args[0],
+                        "next run time": job.next_run_time,
+                    }
+                )
+    except:
+        traceback.print_exc()
+        return traceback.format_exc()
+
+    return json.dumps(job_list)
+
+
+@app.route("/api/notify/del_job", methods=["POST"])
+def del_job():
+    try:
+        req = VariableManager(request.json)
+
+        remind.remove_job(job_id=req.get_val_str("id", default=""))
+        return "OK"
+    except JobLookupError:
+        return "job is not exist"
     except:
         traceback.print_exc()
         return traceback.format_exc()
