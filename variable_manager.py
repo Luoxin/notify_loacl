@@ -205,3 +205,6 @@ class VariableManager(object):
         if val < 0:
             val = 0
         return val
+
+    def add_val(self, key, val):
+        self._variable[key] = val
