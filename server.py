@@ -46,7 +46,7 @@ class Remind(BackgroundScheduler):
         try:
             job = VariableManager(data)
 
-            msg = job.get_val_str("msg", )
+            msg = job.get_val_str("msg",)
             if msg == "":
                 return "miss msg"
 
@@ -76,6 +76,14 @@ class Remind(BackgroundScheduler):
                 )
 
             elif t == 2:  # 间隔提醒
+                now = int(time.time())
+                remind_at = job.get_val_int("remind_at")
+                if remind_at == 0:
+                    remind_at = None
+
+                elif remind_at < now:
+                    return "invalid remind at"
+
                 interval = job.get_val_float("interval")
                 if interval <= 0:
                     return "invalid interval"
@@ -83,6 +91,7 @@ class Remind(BackgroundScheduler):
                 self.add_job(
                     self.task,
                     trigger="interval",
+                    next_run_time=datetime.datetime.fromtimestamp(remind_at),
                     seconds=interval,
                     id=job_id,
                     args=[msg],
@@ -157,4 +166,4 @@ def del_job():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8801, debug=True)
+    app.run(host="0.0.0.0", port=2004, debug=True)
