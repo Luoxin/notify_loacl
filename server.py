@@ -58,7 +58,7 @@ class Remind(BackgroundScheduler):
 
         job_list = self.db.all()
         for job in job_list:
-            if self.add(job) == "repeat job id":
+            if self.add(job).dict().get("id") not in [0, None]:
                 self.db.remove(doc_ids=[job.doc_id])
 
     def notify(self, msg: str = "新的提醒"):
@@ -120,7 +120,7 @@ class Remind(BackgroundScheduler):
                 self.db.insert(job.dict())
             return rsp.r({"job": job})
         except ConflictingIdError:
-            return rsp.err(1, "repeat job id")
+            return rsp.err(1003, "repeat job id")
         except:
             return rsp.err(-1, traceback.format_exc())
 
