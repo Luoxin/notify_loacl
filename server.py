@@ -1,24 +1,50 @@
 import datetime
-import json
 import threading
 import time
 import traceback
 import uuid as uu
+from typing import Any
 
 from apscheduler.jobstores.base import JobLookupError, ConflictingIdError
 from apscheduler.schedulers.background import BackgroundScheduler
-from flask import Flask, request
+from fastapi import FastAPI
+from pydantic import BaseModel
 from tinydb import TinyDB
 from tinydb.database import Document
 from win10toast import ToastNotifier
 
-from variable_manager import VariableManager
 
-app = Flask("notify")
+class Job(BaseModel):
+    id: str = ""
+    msg: str = ""
+    type: int = 0
+    remind_at: int = 0
+    interval: int = 0
+
+
+class Response(BaseModel):
+    errcode: int = 0
+    errmsg: str = ""
+    data: Any = None
+
+    def err(self, errcode: int, errmsg: str = "") -> BaseModel:
+        self.errcode = errcode
+        self.errmsg = errmsg
+        return self
+
+    def r(self, data: Any) -> BaseModel:
+        self.errcode = 0
+        self.errmsg = ""
+        self.data = data
+        return self
 
 
 def gen_uuid() -> str:
     return uu.uuid4().hex
+
+
+def _doc2job(data: Document) -> Job:
+    return Job(**data)
 
 
 class Remind(BackgroundScheduler):
@@ -33,7 +59,6 @@ class Remind(BackgroundScheduler):
         job_list = self.db.all()
         for job in job_list:
             if self.add(job) == "repeat job id":
-                print(type(job))
                 self.db.remove(doc_ids=[job.doc_id])
 
     def notify(self, msg: str = "新的提醒"):
@@ -42,97 +67,77 @@ class Remind(BackgroundScheduler):
     def task(self, task_desc):
         self.notify(task_desc)
 
-    def add(self, data: (dict, Document)):
+    def add(self, job: (Job, Document), persistence: bool = False) -> BaseModel:
+        rsp = Response()
         try:
-            job = VariableManager(data)
+            if isinstance(job, Document):
+                job = _doc2job(job)
 
-            msg = job.get_val_str("msg",)
-            if msg == "":
-                return "miss msg"
+            if job.msg == "":
+                return rsp.err(1001, "miss msg")
 
-            job_id = job.get_val_str("job_id", default=gen_uuid())
+            if job.id == "":
+                job.id = gen_uuid()
 
-            if self.get_job(job_id=job_id) is not None:
-                return "repeat job id"
+            if self.get_job(job_id=job.id) is not None:
+                return rsp.err(1001, "repeat job id")
 
-            job.add_val("job_id", job_id)
+            now = int(time.time())
+            if job.type == 0:
+                return rsp.err(1001, "miss type")
 
-            t = job.get_val_int("type")
-            if t == 0:
-                return "miss type"
-
-            elif t == 1:  # 一次性提醒
-                now = int(time.time())
-                remind_at = job.get_val_int("remind_at")
-                if remind_at < now:
-                    return "invalid remind at"
+            elif job.type == 1:  # 一次性提醒
+                if job.remind_at < now:
+                    return rsp.err(1001, "invalid remind at")
 
                 self.add_job(
                     self.task,
                     trigger="date",
-                    next_run_time=datetime.datetime.fromtimestamp(remind_at),
-                    id=job_id,
-                    args=[msg],
+                    next_run_time=datetime.datetime.fromtimestamp(job.remind_at),
+                    id=job.id,
+                    args=[job.msg],
                 )
 
-            elif t == 2:  # 间隔提醒
-                now = int(time.time())
-                remind_at = job.get_val_int("remind_at")
-                if remind_at == 0:
-                    remind_at = None
+            elif job.type == 2:  # 间隔提醒
+                if job.remind_at == 0:
+                    job.remind_at = None
+                elif job.remind_at < now:
+                    return rsp.err(1001, "invalid remind at")
 
-                elif remind_at < now:
-                    return "invalid remind at"
-
-                interval = job.get_val_float("interval")
-                if interval <= 0:
-                    return "invalid interval"
+                if job.interval <= 0:
+                    return rsp.err(1001, "invalid interval")
 
                 self.add_job(
                     self.task,
                     trigger="interval",
-                    next_run_time=datetime.datetime.fromtimestamp(remind_at),
-                    seconds=interval,
-                    id=job_id,
-                    args=[msg],
+                    next_run_time=datetime.datetime.fromtimestamp(job.remind_at),
+                    seconds=job.interval,
+                    id=job.id,
+                    args=[job.msg],
                 )
 
-            if not isinstance(data, Document):
-                self.db.insert(job.get_val_all())
-            return "OK"
+            if persistence:
+                self.db.insert(job.dict())
+            return rsp.r({"job": job})
         except ConflictingIdError:
-            return "repeat job id"
+            return rsp.err(1, "repeat job id")
         except:
-            traceback.print_exc()
-            return traceback.format_exc()
+            return rsp.err(-1, traceback.format_exc())
 
 
 remind = Remind()
+app = FastAPI(title="notify", version="0.0.1.10")
 
 
-@app.route("/api/notify/send", methods=["POST"])
-def send():
-    try:
-        req = request.json
-
-        message = req.get("message")
-        if message is None or message == "":
-            return "miss message"
-
-        remind.notify(message)
-        return "OK"
-    except:
-        return traceback.format_exc()
+@app.post(path="/api/notify/add_job")
+def add_job(add_job: Job):
+    return remind.add(add_job, True)
 
 
-@app.route("/api/notify/add_job", methods=["POST"])
-def add_job():
-    return remind.add(request.json)
-
-
-@app.route("/api/notify/get_job_list", methods=["POST"])
+@app.post(path="/api/notify/get_job_list")
 def get_job_list():
     job_list = []
+    rsp = Response()
 
     try:
         for job in remind.get_jobs():
@@ -144,26 +149,18 @@ def get_job_list():
                         "next run time": job.next_run_time,
                     }
                 )
+        return rsp.r({"list": job_list})
     except:
-        traceback.print_exc()
-        return traceback.format_exc()
-
-    return json.dumps(job_list)
+        return rsp.err(-1, traceback.format_exc())
 
 
-@app.route("/api/notify/del_job", methods=["POST"])
-def del_job():
+@app.post(path="/api/notify/del_job/id")
+def del_job(id: str):
+    rsp = Response()
     try:
-        req = VariableManager(request.json)
-
-        remind.remove_job(job_id=req.get_val_str("id", default=""))
-        return "OK"
+        remind.remove_job(job_id=id)
+        return rsp.r()
     except JobLookupError:
-        return "job is not exist"
+        return rsp.err(1003,"job is not exist")
     except:
-        traceback.print_exc()
-        return traceback.format_exc()
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=2004, debug=True)
+        return rsp.err(-1, traceback.format_exc())
